@@ -1,0 +1,108 @@
+---
+- name: Provision and Configure Ubuntu VM
+  hosts: cloud_vms  
+  become: true    
+
+  tasks:
+    - name: Update and upgrade apt packages (Standard Upgrade)
+      apt:
+        upgrade: yes          
+        update_cache: yes
+        cache_valid_time: 86400  
+        
+    - name: Download Miniconda installer
+      get_url:
+        url: https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        dest: /tmp/Miniconda3-latest-Linux-x86_64.sh
+
+    - name: Check if Miniconda is already installed
+      stat:
+        path: /miniconda3
+      register: miniconda_installed
+
+    - name: Install Miniconda
+      command: bash /tmp/Miniconda3-latest-Linux-x86_64.sh -b -p /miniconda3
+      when: not miniconda_installed.stat.exists
+      become: true
+
+    - name: Add Miniconda to PATH
+      lineinfile:
+        dest: /home/ubuntu/.profile
+        state: present
+        line: 'PATH="/haemosphere-env/bin:/miniconda3/bin:${PATH}"'
+
+    - name: Inform the user to manually reload profile
+      debug:
+        msg: "Please manually source /home/ubuntu/.profile or start a new session to apply PATH changes."
+
+    - name: Reboot the system
+      reboot:
+        msg: "Rebooting the system after Miniconda installation."
+        pre_reboot_delay: 10
+
+    - name: Wait for the system to come back online
+      wait_for_connection:
+        delay: 30
+        timeout: 300
+
+    - name: Initialize conda for bash shell
+      shell: /miniconda3/bin/conda init bash
+      become: true
+      become_user: ubuntu
+
+    - name: Clone the Haemosphere introduction repository
+      git:
+        repo: https://github.com/quocthanhp/haemosphere-introduction.git
+        dest: /haemosphere
+        version: in_memory_cache  
+      become: true
+
+    - name: Change ownership of Haemosphere directory
+      file:
+        path: /haemosphere
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+
+    - name: Clone the Haemosphere data public repository
+      git:
+        repo: https://bitbucket.org/jarny/haemosphere-data-public.git
+        dest: /haemosphere/data
+        version: py3-data-port
+
+    - name: Change ownership of data directory
+      file:
+        path: /haemosphere/data
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+      become: true
+
+    - name: Clone the RDS repository into models directory
+      git:
+        repo: https://gitlab.unimelb.edu.au/quocthanhp/rds.git
+        dest: /haemosphere/haemosphere/models/rds
+
+    - name: Change ownership of rds directory
+      file:
+        path: /haemosphere/haemosphere/models/rds
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+      become: true
+
+    - name: Make the makeenv.sh script executable
+      file:
+        path: /haemosphere/makeenv.sh
+        mode: '0755'
+
+    - name: Run makeenv.sh script 
+      shell: ./makeenv.sh
+      args:
+        chdir: /haemosphere
+        executable: /bin/bash
+      environment:
+        PATH: "/miniconda3/bin:/haemosphere-env/bin:{{ ansible_env.PATH }}"
+      become: true
+      become_user: ubuntu
+
